@@ -1,0 +1,67 @@
+# ============================================================
+# DaemeonAI OpenCode - local/runtime exclusions
+# ============================================================
+
+# Secrets / credentials
+.env
+.env.*
+*.env
+*.env.*
+**/.env
+**/.env.*
+**/credentials*
+**/*credential*
+**/*secret*
+**/*secrets*
+**/*token*
+**/*password*
+**/*passwd*
+**/*private-key*
+
+# Runtime logs
+logs/
+*.log
+
+# Runtime state
+run/
+tmp/
+cache/
+.cache/
+
+# Generated updater/runtime data
+data/latest-update/
+data/snapshots/
+
+# Temporary / backup files
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+*~
+*.swp
+*.swo
+
+# Test-generated runtime output
+tests/**/real-opencode-result.txt
+
+# Python generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Node generated files
+node_modules/
+
+# Build / coverage output
+dist/
+build/
+coverage/
+
+# Local-only configuration
+config/local*
+config/*.local
+
+# OS/editor metadata
+.DS_Store
+Thumbs.db

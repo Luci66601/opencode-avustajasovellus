@@ -1,0 +1,334 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+BASE="$HOME/daemeonai/opencode-avustajasovellus"
+PIDFILE="$BASE/run/opencode.pid"
+LOG="$BASE/logs/opencode.log"
+
+usage() {
+    echo "DaemeonAI OpenCode Assistant"
+    echo
+    echo "Usage:"
+    echo "  dai-opencode status"
+    echo "  dai-opencode doctor"
+    echo "  dai-opencode shell"
+    echo "  dai-opencode start"
+    echo "  dai-opencode stop"
+    echo "  dai-opencode self-test"
+    echo "  dai-opencode guard-test"
+    echo "  dai-opencode integration-test"
+    echo "  dai-opencode safety-test"
+    echo "  dai-opencode verify"
+    echo "  dai-opencode help"
+}
+
+debian() {
+    proot-distro login debian -- /bin/bash -lc "$1"
+}
+
+status() {
+    echo "=== DaemeonAI OpenCode Assistant ==="
+    echo
+    echo "--- Project ---"
+    echo "$BASE"
+    echo
+    echo "--- Debian ---"
+
+    if proot-distro list -q | grep -qx debian; then
+        echo "Debian: INSTALLED"
+    else
+        echo "Debian: MISSING"
+    fi
+
+    debian '
+        printf "User: "; whoami
+        printf "OS: "; . /etc/os-release; printf "%s %s\n" "$NAME" "$VERSION_ID"
+        printf "Arch: "; dpkg --print-architecture
+        printf "OpenCode: "
+        /root/.opencode/bin/opencode --version 2>/dev/null || echo NOT_FOUND
+    '
+
+    echo
+    echo "--- API environment ---"
+
+    . "$HOME/.config/daemeonai/openai.env" 2>/dev/null || true
+    . "$HOME/daemeonai/config/gemini.env" 2>/dev/null || true
+    . "$HOME/daemeonai/config/apify.env" 2>/dev/null || true
+
+    [ -n "${OPENAI_API_KEY:-}" ] && echo "OpenAI: SET" || echo "OpenAI: NOT_SET"
+    [ -n "${GEMINI_API_KEY:-}" ] && echo "Gemini: SET" || echo "Gemini: NOT_SET"
+    [ -n "${APIFY_API_TOKEN:-}" ] && echo "Apify: SET" || echo "Apify: NOT_SET"
+
+    echo
+    if [ -f "$PIDFILE" ]; then
+        PID="$(cat "$PIDFILE" 2>/dev/null || true)"
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+            echo "OpenCode runner: RUNNING (PID $PID)"
+        else
+            echo "OpenCode runner: STOPPED"
+        fi
+    else
+        echo "OpenCode runner: STOPPED"
+    fi
+}
+
+doctor() {
+    echo "=== DaemeonAI OpenCode Doctor ==="
+    echo
+
+    check() {
+        if command -v "$1" >/dev/null 2>&1; then
+            echo "OK   $1"
+        else
+            echo "MISS $1"
+        fi
+    }
+
+    check proot-distro
+    check bash
+    check git
+    check node
+    check python3
+
+    echo
+    echo "--- Debian ---"
+    if proot-distro list -q | grep -qx debian; then
+        echo "OK   Debian container"
+    else
+        echo "MISS Debian container"
+    fi
+
+    echo
+    echo "--- OpenCode ---"
+    debian '
+        if [ -x /root/.opencode/bin/opencode ]; then
+            echo "OK   /root/.opencode/bin/opencode"
+            /root/.opencode/bin/opencode --version
+        else
+            echo "MISS OpenCode"
+        fi
+    '
+
+    echo
+    echo "--- Central environments ---"
+    for f in \
+        "$HOME/.config/daemeonai/openai.env" \
+        "$HOME/daemeonai/config/gemini.env" \
+        "$HOME/daemeonai/config/apify.env"
+    do
+        [ -f "$f" ] && echo "OK   $f" || echo "MISS $f"
+    done
+
+    echo
+    echo
+    echo "--- Safety configuration ---"
+
+    OC="$BASE/opencode.jsonc"
+    GUARD="$BASE/security/command-guard.sh"
+    REG="$BASE/tests/opencode-safety-regression.sh"
+
+    if [ -f "$OC" ] && grep -q '"permission"' "$OC"; then
+        echo "OK   OpenCode permission config"
+    else
+        echo "WARN OpenCode permission config missing"
+    fi
+
+    if [ -f "$OC" ] && grep -q '"git push": "deny"' "$OC"; then
+        echo "OK   git push denied"
+    else
+        echo "WARN git push deny rule missing"
+    fi
+
+    if [ -f "$OC" ] && grep -q '"rm \*": "deny"' "$OC"; then
+        echo "OK   rm denied"
+    else
+        echo "WARN rm deny rule missing"
+    fi
+
+    if [ -f "$OC" ] && grep -q '"dd \*": "deny"' "$OC"; then
+        echo "OK   dd denied"
+    else
+        echo "WARN dd deny rule missing"
+    fi
+
+    if [ -x "$GUARD" ]; then
+        echo "OK   DaemeonAI command guard"
+    else
+        echo "WARN command guard missing"
+    fi
+
+    if [ -x "$REG" ]; then
+        echo "OK   OpenCode safety regression test"
+    else
+        echo "WARN safety regression test missing"
+    fi
+
+    if grep -RqsE 'opencode([^[:space:]]*)?[[:space:]]+.*(^|[[:space:]])--auto([[:space:]]|$)'         "$BASE/bin" "$BASE/scripts" "$BASE/tests" 2>/dev/null; then
+        echo "WARN OpenCode --auto execution found"
+    else
+        echo "OK   OpenCode --auto not used"
+    fi
+
+    echo
+    echo "API secrets: values not displayed"
+    echo "Doctor check completed."
+}
+
+shell() {
+    echo "Entering Debian root shell."
+    echo "Exit with: exit"
+    echo
+    proot-distro login debian
+}
+
+start() {
+    if [ -f "$PIDFILE" ]; then
+        PID="$(cat "$PIDFILE" 2>/dev/null || true)"
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+            echo "OpenCode runner is already running: PID $PID"
+            exit 0
+        fi
+        rm -f "$PIDFILE"
+    fi
+
+    . "$HOME/.config/daemeonai/openai.env" 2>/dev/null || true
+    . "$HOME/daemeonai/config/gemini.env" 2>/dev/null || true
+    . "$HOME/daemeonai/config/apify.env" 2>/dev/null || true
+
+    echo "Starting OpenCode in Debian..."
+    echo "Safety mode: ENABLED"
+    echo "Autonomous destructive operations: DISABLED"
+
+    nohup env \
+        DAI_SAFETY_MODE=enabled \
+        DAI_ALLOW_DESTRUCTIVE=false \
+        DAI_REQUIRE_APPROVAL=true \
+        OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+        proot-distro login debian -- \
+        /bin/bash -lc '
+            exec /root/.opencode/bin/opencode
+        ' >>"$LOG" 2>&1 &
+
+    PID=$!
+    echo "$PID" > "$PIDFILE"
+
+    echo "Started PID: $PID"
+    echo "Log: $LOG"
+}
+
+self_test() {
+    "$BASE/tests/self-test.sh"
+}
+
+guard_test() {
+    "$BASE/tests/guard-test.sh"
+}
+
+integration_test() {
+    "$BASE/tests/opencode-integration-test.sh"
+}
+
+safety_test() {
+    "$BASE/tests/opencode-safety-regression.sh"
+}
+
+verify() {
+    local failed=0
+
+    echo "=== DaemeonAI OpenCode VERIFY ==="
+    echo
+
+    echo "--- DOCTOR ---"
+    "$BASE/bin/dai-opencode" doctor || failed=1
+
+    echo
+    echo "--- SELF-TEST ---"
+    "$BASE/tests/self-test.sh" || failed=1
+
+    echo
+    echo "--- GUARD-TEST ---"
+    "$BASE/tests/guard-test.sh" || failed=1
+
+    echo
+    echo "--- INTEGRATION-TEST ---"
+    "$BASE/tests/opencode-integration-test.sh" || failed=1
+
+    echo
+    echo "--- SAFETY-TEST ---"
+    "$BASE/tests/opencode-safety-regression.sh" || failed=1
+
+    echo
+    if [ "$failed" -eq 0 ]; then
+        echo "=== VERIFY: PASS ==="
+        return 0
+    else
+        echo "=== VERIFY: FAIL ==="
+        return 1
+    fi
+}
+
+stop() {
+    if [ ! -f "$PIDFILE" ]; then
+        echo "OpenCode runner is not running."
+        return 0
+    fi
+
+    PID="$(cat "$PIDFILE" 2>/dev/null || true)"
+
+    if [ -z "$PID" ]; then
+        rm -f "$PIDFILE"
+        echo "OpenCode runner stopped."
+        return 0
+    fi
+
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "Stopping OpenCode process tree rooted at PID $PID..."
+
+        # Stop descendants first so the Debian OpenCode process
+        # does not survive the PRoot wrapper.
+        CHILDREN="$(pgrep -P "$PID" 2>/dev/null || true)"
+
+        for CHILD in $CHILDREN; do
+            kill "$CHILD" 2>/dev/null || true
+        done
+
+        kill "$PID" 2>/dev/null || true
+
+        # Give normal termination a short grace period.
+        for _ in 1 2 3 4 5; do
+            sleep 1
+            if ! kill -0 "$PID" 2>/dev/null; then
+                break
+            fi
+        done
+
+        # If the wrapper still exists, terminate it forcefully.
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "Graceful stop timed out; sending SIGKILL to PID $PID."
+            kill -KILL "$PID" 2>/dev/null || true
+        fi
+    fi
+
+    rm -f "$PIDFILE"
+    echo "OpenCode runner stopped."
+}
+
+case "${1:-help}" in
+    status) status ;;
+    doctor) doctor ;;
+    shell) shell ;;
+    start) start ;;
+    stop) stop ;;
+    self-test) self_test ;;
+    guard-test) guard_test ;;
+    integration-test) integration_test ;;
+    safety-test) safety_test ;;
+    verify) verify ;;
+    help|-h|--help) usage ;;
+    *)
+        echo "Unknown command: $1"
+        echo
+        usage
+        exit 1
+        ;;
+esac

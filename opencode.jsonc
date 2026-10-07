@@ -1,0 +1,64 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "permission": {
+    "read": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "**/.env": "deny",
+      "**/.env.*": "deny"
+    },
+
+    "edit": {
+      "*": "allow",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "**/.env": "deny",
+      "**/.env.*": "deny",
+      "**/credentials*": "deny",
+      "**/*secret*": "deny"
+    },
+
+    "bash": {
+      "*": "allow",
+
+      "rm *": "deny",
+      "rmdir *": "deny",
+      "find * -delete": "deny",
+      "git clean *": "deny",
+
+      "dd *": "deny",
+      "mkfs *": "deny",
+      "mkswap *": "deny",
+      "fdisk *": "deny",
+      "parted *": "deny",
+      "wipefs *": "deny",
+
+      "shutdown *": "deny",
+      "reboot *": "deny",
+      "poweroff *": "deny",
+      "halt *": "deny",
+
+      "mount *": "deny",
+      "umount *": "deny",
+
+      "git push": "deny",
+      "git push *": "deny",
+
+      "bash -c *": "deny",
+      "sh -c *": "deny",
+      "zsh -c *": "deny",
+      "python -c *": "deny",
+      "python3 -c *": "deny",
+      "node -e *": "deny",
+
+      "*wallet*": "deny",
+      "*payment*": "deny",
+      "*transfer*": "deny",
+      "*monero*transfer*": "deny",
+      "*bitcoin*send*": "deny",
+      "*crypto*transfer*": "deny"
+    }
+  }
+}

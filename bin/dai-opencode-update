@@ -1,0 +1,191 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -u
+
+BASE="/data/data/com.termux/files/home/daemeonai/opencode-avustajasovellus"
+DATA="$BASE/data"
+LOG="$BASE/logs/opencode-updater"
+STATE="$BASE/ai/state"
+OPENCODE_WRAPPER="$BASE/bin/dai-opencode"
+
+mkdir -p "$LOG" "$DATA/snapshots" "$DATA/latest-update"
+
+DATE="$(date '+%Y-%m-%d')"
+STAMP="$(date '+%Y%m%d-%H%M%S')"
+RUNLOG="$LOG/update-$STAMP.log"
+SNAP="$DATA/snapshots/snapshot-$STAMP.txt"
+PROMPT_FILE="$DATA/snapshots/opencode-prompt-$STAMP.md"
+RESULT="$DATA/latest-update/latest-result-$DATE.txt"
+LIMIT_FILE="$STATE/daily-files-state"
+
+exec > >(tee -a "$RUNLOG") 2>&1
+
+echo "=== DaemeonAI OpenCode DAILY UPDATE ==="
+echo "DATE=$DATE"
+echo "STAMP=$STAMP"
+
+DAILY_LIMIT="${DAEMEONAI_DAILY_FILE_LIMIT:-5}"
+
+USED=0
+if [ -f "$LIMIT_FILE" ]; then
+    USED="$(sed -n '1p' "$LIMIT_FILE" 2>/dev/null || echo 0)"
+    case "$USED" in
+        ''|*[!0-9]*) USED=0 ;;
+    esac
+fi
+
+REMAINING=$((DAILY_LIMIT - USED))
+
+echo "DAILY_LIMIT=$DAILY_LIMIT"
+echo "FILES_USED_TODAY=$USED"
+echo "FILES_REMAINING=$REMAINING"
+
+if [ "$REMAINING" -le 0 ]; then
+    echo "DAILY_LIMIT_REACHED=YES"
+    printf 'DATE=%s\nSTATUS=DAILY_LIMIT_REACHED\nFILES_USED=%s\n' "$DATE" "$USED" > "$RESULT"
+    chmod 600 "$RESULT"
+    exit 0
+fi
+
+if [ ! -x "$OPENCODE_WRAPPER" ]; then
+    echo "ERROR=OpenCode wrapper missing: $OPENCODE_WRAPPER"
+    exit 1
+fi
+
+echo
+echo "=== BUILDING DATA SNAPSHOT ==="
+
+{
+    echo "# DaemeonAI DATA SNAPSHOT"
+    echo "Generated: $(date)"
+    echo "Date: $DATE"
+    echo "Daily limit: $DAILY_LIMIT"
+    echo "Already changed: $USED"
+    echo "Remaining: $REMAINING"
+    echo
+
+    for DIR in current-state errors test-results pending-issues latest-update; do
+        echo
+        echo "===== $DIR ====="
+        find "$DATA/$DIR" -type f -maxdepth 3 -print 2>/dev/null | sort | while IFS= read -r FILE; do
+            echo
+            echo "--- FILE: $FILE ---"
+            if [ "$DIR" = "errors" ] || [ "$DIR" = "test-results" ]; then
+                tail -n 400 "$FILE" 2>/dev/null || true
+            else
+                sed -n '1,400p' "$FILE" 2>/dev/null || true
+            fi
+        done
+    done
+} > "$SNAP"
+
+chmod 600 "$SNAP"
+
+echo "SNAPSHOT=$SNAP"
+
+cat > "$PROMPT_FILE" <<'OPENCODE_PROMPT'
+# DaemeonAI Autonomous Daily Maintenance
+
+Use the supplied DATA SNAPSHOT as the authoritative current state.
+
+The historical Share conversation is only the initial specification.
+Do not treat it as the daily source of truth.
+
+## REQUIRED BEHAVIOUR
+
+1. Analyse the observed current state.
+2. Prioritise reproducible errors, failed tests and explicit pending issues.
+3. Do not invent unrelated features.
+4. Inspect existing code before modifying it.
+5. Make the smallest safe repair.
+6. Maximum five files may be changed per calendar day.
+7. Never exceed the remaining daily file budget supplied in the snapshot.
+8. Never expose API keys, tokens, credentials or secret values.
+9. Never perform destructive operations.
+10. Never use rm, dd, mkfs, reboot, shutdown or equivalent destructive operations.
+11. Never perform payments, wallet operations or financial transfers.
+12. Run relevant tests after every modification.
+13. Run DaemeonAI safety verification after modifications.
+14. If tests fail, do not publish the change.
+15. If safe repair is impossible, stop and record the blocker.
+16. Do not modify unrelated files.
+17. Do not push directly to protected/default branches.
+18. Preserve existing DaemeonAI safety gates.
+
+## OUTPUT
+
+Report:
+
+- observed problems
+- priority
+- files inspected
+- files changed
+- tests executed
+- safety checks executed
+- remaining problems
+- whether the update is safe to publish
+
+DATA SNAPSHOT:
+OPENCODE_PROMPT
+
+cat "$SNAP" >> "$PROMPT_FILE"
+chmod 600 "$PROMPT_FILE"
+
+echo "PROMPT_FILE=$PROMPT_FILE"
+
+echo
+echo "=== OPENCODE WRAPPER ==="
+echo "WRAPPER=$OPENCODE_WRAPPER"
+
+echo
+echo "=== OPEN CODE DAILY UPDATE TEST ==="
+
+START="$(date +%s)"
+
+set +e
+timeout 900 "$OPENCODE_WRAPPER" update "$(cat "$PROMPT_FILE")" > "$RESULT.tmp" 2>&1
+RC=$?
+set -e
+
+END="$(date +%s)"
+ELAPSED=$((END-START))
+
+{
+    echo "DATE=$DATE"
+    echo "STAMP=$STAMP"
+    echo "OPENCODE_RC=$RC"
+    echo "ELAPSED_SECONDS=$ELAPSED"
+    echo "SNAPSHOT=$SNAP"
+    echo "PROMPT=$PROMPT_FILE"
+    echo "RUNLOG=$RUNLOG"
+    echo
+    cat "$RESULT.tmp" 2>/dev/null || true
+} > "$RESULT"
+
+rm -f "$RESULT.tmp"
+chmod 600 "$RESULT"
+
+echo
+echo "=== POST UPDATE VERIFY ==="
+
+VERIFY_RC=0
+
+if [ -x "$BASE/bin/dai-opencode" ]; then
+    "$BASE/bin/dai-opencode" verify
+    VERIFY_RC=$?
+else
+    echo "VERIFY_WRAPPER=NOT_FOUND"
+fi
+
+echo
+echo "=== FINAL ==="
+echo "OPENCODE_RC=$RC"
+echo "VERIFY_RC=$VERIFY_RC"
+echo "RESULT=$RESULT"
+
+if [ "$RC" -eq 0 ] && [ "$VERIFY_RC" -eq 0 ]; then
+    echo "DAI_OPENCODE_UPDATE=PASS"
+else
+    echo "DAI_OPENCODE_UPDATE=FAIL"
+fi
+
+exit "$RC"
