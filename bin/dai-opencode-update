@@ -24,7 +24,8 @@ echo "=== DaemeonAI OpenCode DAILY UPDATE ==="
 echo "DATE=$DATE"
 echo "STAMP=$STAMP"
 
-DAILY_LIMIT="${DAEMEONAI_DAILY_FILE_LIMIT:-10}"
+DAILY_LIMIT="${DAEMEONAI_DAILY_FILE_LIMIT:-50}"
+PUBLICATION_LIMIT="${DAEMEONAI_DAILY_PUBLICATION_LIMIT:-5}"
 
 USED=0
 if [ -f "$LIMIT_FILE" ]; then
@@ -102,7 +103,7 @@ Do not treat it as the daily source of truth.
 3. Do not invent unrelated features.
 4. Inspect existing code before modifying it.
 5. Make the smallest safe repair.
-6. Maximum ten files may be changed per calendar day.
+6. Maximum 10 files per publication; maximum 50 files and 5 publications per calendar day.
 7. Never exceed the remaining daily file budget supplied in the snapshot.
 8. Never expose API keys, tokens, credentials or secret values.
 9. Never perform destructive operations.
