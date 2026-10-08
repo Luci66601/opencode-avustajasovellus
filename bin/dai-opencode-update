@@ -2,9 +2,10 @@
 set -u
 
 BASE="/data/data/com.termux/files/home/daemeonai/opencode-avustajasovellus"
-DATA="$BASE/data"
+DAEMEONAI_BASE="/data/data/com.termux/files/home/daemeonai"
+DATA="$DAEMEONAI_BASE/data"
 LOG="$BASE/logs/opencode-updater"
-STATE="$BASE/ai/state"
+STATE="$DAEMEONAI_BASE/ai/state"
 OPENCODE_WRAPPER="$BASE/bin/dai-opencode"
 
 mkdir -p "$LOG" "$DATA/snapshots" "$DATA/latest-update"
@@ -23,11 +24,15 @@ echo "=== DaemeonAI OpenCode DAILY UPDATE ==="
 echo "DATE=$DATE"
 echo "STAMP=$STAMP"
 
-DAILY_LIMIT="${DAEMEONAI_DAILY_FILE_LIMIT:-5}"
+DAILY_LIMIT="${DAEMEONAI_DAILY_FILE_LIMIT:-10}"
 
 USED=0
 if [ -f "$LIMIT_FILE" ]; then
-    USED="$(sed -n '1p' "$LIMIT_FILE" 2>/dev/null || echo 0)"
+    STATE_DATE="$(sed -n '1p' "$LIMIT_FILE" 2>/dev/null || true)"
+    STATE_COUNT="$(sed -n '2p' "$LIMIT_FILE" 2>/dev/null || echo 0)"
+    if [ "$STATE_DATE" = "$DATE" ]; then
+        USED="$STATE_COUNT"
+    fi
     case "$USED" in
         ''|*[!0-9]*) USED=0 ;;
     esac
@@ -97,7 +102,7 @@ Do not treat it as the daily source of truth.
 3. Do not invent unrelated features.
 4. Inspect existing code before modifying it.
 5. Make the smallest safe repair.
-6. Maximum five files may be changed per calendar day.
+6. Maximum ten files may be changed per calendar day.
 7. Never exceed the remaining daily file budget supplied in the snapshot.
 8. Never expose API keys, tokens, credentials or secret values.
 9. Never perform destructive operations.
@@ -108,7 +113,7 @@ Do not treat it as the daily source of truth.
 14. If tests fail, do not publish the change.
 15. If safe repair is impossible, stop and record the blocker.
 16. Do not modify unrelated files.
-17. Do not push directly to protected/default branches.
+17. Automatically publish successful changes to GitHub after all tests, safety checks, secret checks and the daily file limit pass.
 18. Preserve existing DaemeonAI safety gates.
 
 ## OUTPUT
@@ -142,7 +147,7 @@ echo "=== OPEN CODE DAILY UPDATE TEST ==="
 START="$(date +%s)"
 
 set +e
-timeout 900 "$OPENCODE_WRAPPER" update "$(cat "$PROMPT_FILE")" > "$RESULT.tmp" 2>&1
+timeout 900 proot-distro login debian -- /root/.opencode/bin/opencode run "$(cat "$PROMPT_FILE")" > "$RESULT.tmp" 2>&1
 RC=$?
 set -e
 
@@ -183,9 +188,31 @@ echo "VERIFY_RC=$VERIFY_RC"
 echo "RESULT=$RESULT"
 
 if [ "$RC" -eq 0 ] && [ "$VERIFY_RC" -eq 0 ]; then
-    echo "DAI_OPENCODE_UPDATE=PASS"
+    echo
+    echo "=== AUTOMATIC GITHUB PUBLICATION ==="
+
+    PUBLISHER="$BASE/bin/dai-opencode-publish"
+
+    if [ ! -x "$PUBLISHER" ]; then
+        echo "PUBLISH_RC=NOT_FOUND"
+        echo "DAI_OPENCODE_UPDATE=FAIL"
+        exit 1
+    fi
+
+    "$PUBLISHER"
+    PUBLISH_RC=$?
+
+    echo "PUBLISH_RC=$PUBLISH_RC"
+
+    if [ "$PUBLISH_RC" -eq 0 ]; then
+        echo "DAI_OPENCODE_UPDATE=PASS"
+    else
+        echo "DAI_OPENCODE_UPDATE=FAIL"
+        exit "$PUBLISH_RC"
+    fi
 else
     echo "DAI_OPENCODE_UPDATE=FAIL"
+    exit "$RC"
 fi
 
-exit "$RC"
+exit 0

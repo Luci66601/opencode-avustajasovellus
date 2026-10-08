@@ -133,10 +133,10 @@ doctor() {
         echo "WARN OpenCode permission config missing"
     fi
 
-    if [ -f "$OC" ] && grep -q '"git push": "deny"' "$OC"; then
-        echo "OK   git push denied"
+    if [ -f "$OC" ] && grep -q '"git push": "allow"' "$OC"; then
+        echo "OK   git push allowed"
     else
-        echo "WARN git push deny rule missing"
+        echo "WARN git push allow rule missing"
     fi
 
     if [ -f "$OC" ] && grep -q '"rm \*": "deny"' "$OC"; then

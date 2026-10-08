@@ -23,7 +23,10 @@
     "bash": {
       "*": "allow",
 
+      "rm": "deny",
       "rm *": "deny",
+      "rm -rf": "deny",
+      "rm -rf *": "deny",
       "rmdir *": "deny",
       "find * -delete": "deny",
       "git clean *": "deny",
@@ -43,8 +46,8 @@
       "mount *": "deny",
       "umount *": "deny",
 
-      "git push": "deny",
-      "git push *": "deny",
+      "git push": "allow",
+      "git push *": "allow",
 
       "bash -c *": "deny",
       "sh -c *": "deny",

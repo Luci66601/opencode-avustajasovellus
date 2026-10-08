@@ -1,0 +1,262 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+ROOT="$HOME/daemeonai/opencode-avustajasovellus"
+cd "$ROOT" || exit 1
+
+echo "=== DAEMEONAI OPENCODE PUBLISH ==="
+
+echo
+echo "--- 1. REPOSITORY ---"
+git rev-parse --is-inside-work-tree >/dev/null
+BRANCH="$(git branch --show-current)"
+
+if [ "$BRANCH" != "main" ]; then
+    echo "FAIL: publishing is allowed only from main"
+    echo "Current branch: $BRANCH"
+    exit 1
+fi
+
+echo "PASS: main branch"
+
+echo
+echo "--- 2. SAFETY REGRESSION ---"
+./tests/opencode-safety-regression.sh
+
+echo
+echo "--- 3. FULL TESTS ---"
+./tests/self-test.sh
+./tests/guard-test.sh
+./tests/opencode-integration-test.sh
+
+echo
+echo
+echo "--- 4. CENTRAL PUBLIC SECRET GATE ---"
+
+if "$HOME/daemeonai/ai/adapters/public-secret-gate.sh" "$ROOT"; then
+    SECRET_SCAN_OK=1
+    export SECRET_SCAN_OK
+    echo "PASS: central public secret gate"
+else
+    SECRET_SCAN_OK=0
+    export SECRET_SCAN_OK
+    echo "FAIL: central public secret gate"
+    exit 1
+fi
+
+echo "--- 5. FORBIDDEN TRACKED FILES ---"
+
+if git ls-files | grep -E \
+    '(^|/)(\.env|.*\.env|.*credentials.*|.*secret.*|.*token.*|.*password.*|logs/|run/|.*\.log$|.*\.bak$|.*\.backup$|.*\.tmp$)' \
+    >/dev/null 2>&1; then
+    echo "FAIL: sensitive/runtime file is tracked"
+    git ls-files | grep -E \
+      '(^|/)(\.env|.*\.env|.*credentials.*|.*secret.*|.*token.*|.*password.*|logs/|run/|.*\.log$|.*\.bak$|.*\.backup$|.*\.tmp$)' || true
+    exit 1
+fi
+
+echo "PASS: no forbidden tracked files"
+
+echo
+echo "--- 6. DAILY FILE LIMIT ---"
+
+CHANGED_FILES="$(git status --porcelain=v1 | awk '
+function clean(p) {
+    sub(/^.* -> /, "", p)
+    return p
+}
+{
+    code=substr($0,1,2)
+    path=substr($0,4)
+    if (code !~ /^[ MARCUD?!]{2}$/) next
+    if (path == "" || path ~ /^LIMIT_OUT=/) next
+    if (code ~ /R/ && index(path," -> ") > 0) {
+        split(path,a," -> ")
+        print clean(a[1])
+        print clean(a[2])
+    } else {
+        print clean(path)
+    }
+}' | sed '/^$/d' | sort -u)"
+
+CHANGED_COUNT="$(printf '%s\n' "$CHANGED_FILES" | sed '/^$/d' | wc -l | tr -d ' ')"
+
+echo "Changed files detected: $CHANGED_COUNT"
+printf '%s\n' "$CHANGED_FILES"
+
+if [ "$CHANGED_COUNT" -eq 0 ]; then
+    echo "INFO: no changes detected"
+    exit 0
+fi
+
+REPO_FILE_LIMIT="${DAEMEONAI_REPO_FILE_LIMIT:-10}"
+DAILY_LIMIT_SCRIPT="$HOME/daemeonai/ai/adapters/daily-file-limit.sh"
+
+if [ "$CHANGED_COUNT" -lt 1 ]; then
+    echo "FAIL: no files available for publication"
+    exit 1
+fi
+
+if [ "$CHANGED_COUNT" -gt "$REPO_FILE_LIMIT" ]; then
+    echo "FAIL: more than $REPO_FILE_LIMIT files would be published for this repo"
+    exit 1
+fi
+
+echo "PASS: repo publication limit allows $CHANGED_COUNT/$REPO_FILE_LIMIT files"
+echo
+echo "--- 6B. DAILY FILE + PUBLICATION LIMIT ---"
+if "$DAILY_LIMIT_SCRIPT" "$CHANGED_COUNT" 1; then
+    echo "PASS: daily limits allow this publication"
+else
+    echo "FAIL: daily file/publication limit exceeded"
+    exit 1
+fi
+
+echo
+echo "--- 7. STAGE ONLY DETECTED FILES ---"
+
+printf '%s\n' "$CHANGED_FILES" | while IFS= read -r file; do
+    [ -n "$file" ] && git add -- "$file"
+done
+
+echo
+echo "--- 8. STAGED FILES ---"
+git diff --cached --name-status
+
+echo
+echo
+echo "--- 9. CENTRAL STAGED SECRET GATE ---"
+
+if "$HOME/daemeonai/ai/adapters/public-secret-gate.sh" "$ROOT"; then
+    SECRET_SCAN_OK=1
+    export SECRET_SCAN_OK
+    echo "PASS: central staged secret gate"
+else
+    SECRET_SCAN_OK=0
+    export SECRET_SCAN_OK
+    echo "FAIL: central staged secret gate"
+    git reset
+    exit 1
+fi
+
+echo "--- 10. STAGED FORBIDDEN FILE CHECK ---"
+
+if git diff --cached --name-only | grep -E \
+    '(^|/)(\.env|.*\.env|.*credentials.*|.*secret.*|.*token.*|.*password.*|logs/|run/|.*\.log$|.*\.bak$|.*\.backup$|.*\.tmp$)' \
+    >/dev/null 2>&1; then
+    echo "FAIL: forbidden file staged"
+    git reset
+    exit 1
+fi
+
+echo "PASS: no forbidden staged files"
+
+echo
+echo "--- 11. AI DISCLOSURE + COMMIT ---"
+
+if git diff --cached --quiet; then
+    echo "INFO: no new changes to commit"
+else
+    AI_CHANGED_FILES="$(git diff --cached --name-only)"
+    AI_DIFFSTAT="$(git diff --cached --stat)"
+
+    AI_COMMIT_BODY="$(cat <<EOF
+🤖 AI-assisted change
+
+DaemeonAI/OpenCode automation created and verified this change.
+
+What changed:
+$AI_CHANGED_FILES
+
+Change summary:
+$AI_DIFFSTAT
+
+Integration:
+DaemeonAI OpenCode analyses project state, performs controlled code changes,
+runs tests and safety checks, scans for secrets, and publishes successful
+changes to the project's GitHub repository.
+
+Automation policy:
+- Maximum 50 changed files per day and maximum 5 publications per day.
+- Destructive commands are blocked.
+- Financial transfers and payment operations are blocked.
+- Secret exposure is blocked.
+- GitHub publication requires the required verification gates to pass.
+
+Verification:
+- Safety regression: PASS
+- Self-test: PASS
+- Guard test: PASS
+- Integration test: PASS
+- Secret scan: PASS
+- Daily file limit: PASS
+
+AI disclosure:
+This change was produced with AI assistance by DaemeonAI/OpenCode and
+verified by automated project tests.
+EOF
+)"
+
+    AI_NOTICE_OK=1
+    export AI_NOTICE_OK
+
+    git commit       -m "Update DaemeonAI OpenCode assistant"       -m "$AI_COMMIT_BODY"
+fi
+
+echo
+echo "--- 12. REMOTE ---"
+
+REMOTE="$(git remote get-url origin 2>/dev/null || true)"
+
+if [ -z "$REMOTE" ]; then
+    echo "FAIL: origin remote is not configured"
+    echo
+    echo "Configure it first, for example:"
+    echo "git remote add origin <YOUR-GITHUB-REPO>"
+    exit 1
+fi
+
+echo "origin=$REMOTE"
+
+case "$REMOTE" in
+    https://github.com/*|git@github.com:*)
+        echo "PASS: GitHub remote"
+        ;;
+    *)
+        echo "FAIL: remote is not GitHub"
+        exit 1
+        ;;
+esac
+
+echo
+echo "--- 13. FINAL LOCAL STATUS ---"
+git status --short
+
+if [ -n "$(git status --porcelain)" ]; then
+    echo "FAIL: working tree is not clean"
+    exit 1
+fi
+
+echo "PASS: working tree clean"
+
+echo
+echo "--- 14. PUSH ---"
+echo "Publishing main to GitHub..."
+
+git push -u origin main
+
+echo
+echo "--- 15. CONSUME DAILY FILE LIMIT ---"
+
+if "$HOME/daemeonai/ai/adapters/daily-file-limit.sh" consume "$CHANGED_COUNT" 1; then
+    echo "PASS: daily file limit consumed after successful push"
+else
+    echo "FAIL: daily file limit consumption failed after successful push"
+    exit 1
+fi
+
+echo
+echo "=== PUBLISH SUCCESS ==="
+echo "Repository: $REMOTE"
+echo "Branch: main"
+git log -1 --oneline
